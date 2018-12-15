@@ -1,102 +1,121 @@
-import pandas as pd
+import csv
+import os
+import sys
+
+import cv2
 import numpy as np
-import cv2 as cv
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.utils.data
-
-import time
-
-from dataset import ImageSteeringDataset
-
-
-class Nvidia(nn.Module):
-    def __init__(self):
-        super(Nvidia, self).__init__()
-        self.conv1 = nn.Conv2d(3, 24, (5, 5), stride=2)
-        self.conv2 = nn.Conv2d(24, 36, (5, 5), stride=2)
-        self.conv3 = nn.Conv2d(36, 48, (5, 5), stride=2)
-        self.conv4 = nn.Conv2d(48, 64, (3, 3), stride=1)
-        self.conv5 = nn.Conv2d(64, 64, (3, 3), stride=1)
-        self.fc1 = nn.Linear(64 * 1 * 18, 100)
-        self.fc2 = nn.Linear(100, 50)
-        self.fc3 = nn.Linear(50, 10)
-        self.fc4 = nn.Linear(10, 1)
+import matplotlib.pyplot as plt
+from PIL import Image
+import sklearn
+from sklearn.model_selection import train_test_split
+from keras.models import Sequential, Model
+from keras.layers import Flatten, Dense, Lambda, Conv2D, Cropping2D, Activation, Dropout
+from keras.layers.pooling import MaxPooling2D
+from keras.layers.normalization import BatchNormalization
+from keras.optimizers import Adam
+from keras.callbacks import ModelCheckpoint, CSVLogger
 
 
-    def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
-        x = F.relu(self.conv4(x))
-        x = F.relu(self.conv5(x))
-        x = F.relu(self.fc1(x.view(x.size(0), -1)))
-        x = F.dropout(x, p=0.5, training=self.training)
-        x = F.relu(self.fc2(x))
-        x = F.dropout(x, p=0.5, training=self.training)
-        x = F.relu(self.fc3(x))
-        x = F.dropout(x, p=0.5, training=self.training)
-        x = self.fc4(x)
-        return x
-                
+def load_samples(csvfile):
+    samples = []
+    with open(csvfile) as f:
+        reader = csv.reader(f)
+        for line in reader:
+            samples.append(line)
+    return samples
 
-def split_train_test_dataset(dataset, ratio):
-    train_size = int(ratio * len(dataset))
-    test_size = len(dataset) - train_size
-    train_dataset, test_dataset = torch.utils.data.random_split(
-            dataset,
-            [train_size, test_size])
-    return train_dataset, test_dataset
+def load_image_randomly(batch_sample):
+    rand = np.random.randint(3)
+    if rand == 0:
+        image_path = '/opt/data/IMG/'+batch_sample[0].split('/')[-1]
+        corr = 0.0
+    elif rand == 1:
+        image_path = '/opt/data/IMG/'+batch_sample[1].split('/')[-1]
+        corr = 0.2
+    elif rand == 2:
+        image_path = '/opt/data/IMG/'+batch_sample[2].split('/')[-1]
+        corr = -0.2
+    else:
+        sys.exit('Error: load_image_randomly function')
+        
+    image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
+    angle = float(batch_sample[3]) + corr
+    return image, angle
 
+def flip_randomly(image, angle):
+    rand = np.random.randint(2)
+    if rand == 0:
+        image = cv2.flip(image, 1)
+        angle = -angle
+    return image, angle
 
-def train(model, dataset):
-    print('>>> Train model ...')
-    train_dataloader = torch.utils.data.DataLoader(
-            dataset, batch_size=4,
-            shuffle=True, num_workers=2)
-    n_epoch = 10
-    lr = 0.0001
+def generator(samples, batch_size=32, is_train=False):
+    n_samples = len(samples)
+    while 1:
+        sklearn.utils.shuffle(samples)
+        for offset in range(0, n_samples, batch_size):
+            batch_samples = samples[offset:offset+batch_size]
+            
+            images = []
+            angles = []
+            for batch_sample in batch_samples:
+                if is_train == True:
+                    image, angle = load_image_randomly(batch_sample)
+                    image, angle = flip_randomly(image, angle)
+                else:
+                    image_path = '/opt/data/IMG/'+batch_sample[0].split('/')[-1]
+                    image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
+                    angle = float(batch_sample[3])
+                images.append(image)
+                angles.append(angle)
+            
+            x = np.array(images)
+            y = np.array(angles)
+            yield sklearn.utils.shuffle(x, y)
 
-    criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
-    model.train()
-    for epoch in range(n_epoch):
-        running_loss = 0.0
-
-        for i, (features, labels) in enumerate(train_dataloader):
-            optimizer.zero_grad()
-
-            outputs = model(features)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-
-            running_loss += loss.item()
-            if i % 100 == 99:
-                print('>>> outputs')
-                print(outputs)
-                print('>>> labels')
-                print(labels)
-                print(loss)
-                print('[%d, %5d] loss: %.6f' %
-                        (epoch+1, i+1, running_loss/2000))
-                running_loss = 0.0
-
+def define_model():
+    # Nvidia end-to-end model
+    model = Sequential()
+    model.add(Lambda(lambda x: (x / 255.0) - 0.5, input_shape=(160, 320, 3)))
+    model.add(Cropping2D(cropping=((50, 20), (0, 0)), input_shape=(160, 320, 3)))
+    model.add(Conv2D(24, (5, 5), strides=(2, 2), activation='relu'))
+    model.add(Conv2D(36, (5, 5), strides=(2, 2), activation='relu'))
+    model.add(Conv2D(48, (5, 5), strides=(2, 2), activation='relu'))
+    model.add(Conv2D(64, (3, 3), activation='relu'))
+    model.add(Conv2D(64, (3, 3), activation='relu'))
+    model.add(Flatten())
+    model.add(Dense(100, activation='relu'))
+    model.add(Dropout(0.5))
+    model.add(Dense(50, activation='relu'))
+    model.add(Dense(10, activation='relu'))
+    model.add(Dense(1))
+    # dropout or batch_normalization
     return model
 
+def fit(model, train_samples, validation_samples, batch_size=32):
+    train_generator = generator(train_samples, batch_size=batch_size, is_train=True)
+    validation_generator = generator(validation_samples, batch_size=batch_size, is_train=False)
+    model.compile(loss='mean_squared_error', optimizer=Adam(lr=1e-4))
+    checkpoint = ModelCheckpoint('model-{epoch:03d}.h5',
+                                 monitor='val_loss',
+                                 verbose=0,
+                                 save_best_only=False,
+                                 mode='auto')
+    csv_logger = CSVLogger('./logs/training.log')
+    history = model.fit_generator(train_generator,
+                                  steps_per_epoch=len(train_samples)/batch_size,
+                                  validation_data=validation_generator,
+                                  nb_val_samples=len(validation_samples),
+                                  epochs=10,
+                                  callbacks=[csv_logger])
+    model.save('model.h5')
+    return history
+                        
 
-def main():
+if __name__ == '__main__':
     print('>>> Initialize ...')
-    dataset = ImageSteeringDataset('./data/driving_log.csv', True)
-
-    train_dataset, test_dataset = split_train_test_dataset(
-            dataset, ratio=0.7)
-
-    model = Nvidia()
-    model = train(model, train_dataset)
-        
-
-
-if __name__ == "__main__":
-    main()
+    samples = load_samples('/opt/data/driving_log.csv')
+    train_samples, validation_samples = train_test_split(samples, test_size=0.2)
+    model = define_model()
+    history = fit(model, train_samples, validation_samples)
+    
