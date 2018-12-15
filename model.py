@@ -5,11 +5,10 @@ import sys
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-from PIL import Image
 import sklearn
 from sklearn.model_selection import train_test_split
 from keras.models import Sequential, Model
-from keras.layers import Flatten, Dense, Lambda, Conv2D, Cropping2D, Activation, Dropout
+from keras.layers import Flatten, Dense, Lambda, Conv2D, Cropping2D, Dropout
 from keras.layers.pooling import MaxPooling2D
 from keras.layers.normalization import BatchNormalization
 from keras.optimizers import Adam
@@ -23,6 +22,7 @@ def load_samples(csvfile):
         for line in reader:
             samples.append(line)
     return samples
+
 
 def load_image_randomly(batch_sample):
     rand = np.random.randint(3)
@@ -42,12 +42,14 @@ def load_image_randomly(batch_sample):
     angle = float(batch_sample[3]) + corr
     return image, angle
 
+
 def flip_randomly(image, angle):
     rand = np.random.randint(2)
     if rand == 0:
         image = cv2.flip(image, 1)
         angle = -angle
     return image, angle
+
 
 def generator(samples, batch_size=32, is_train=False):
     n_samples = len(samples)
@@ -73,6 +75,7 @@ def generator(samples, batch_size=32, is_train=False):
             y = np.array(angles)
             yield sklearn.utils.shuffle(x, y)
 
+
 def define_model():
     # Nvidia end-to-end model
     model = Sequential()
@@ -89,8 +92,8 @@ def define_model():
     model.add(Dense(50, activation='relu'))
     model.add(Dense(10, activation='relu'))
     model.add(Dense(1))
-    # dropout or batch_normalization
     return model
+
 
 def fit(model, train_samples, validation_samples, batch_size=32):
     train_generator = generator(train_samples, batch_size=batch_size, is_train=True)
@@ -118,4 +121,3 @@ if __name__ == '__main__':
     train_samples, validation_samples = train_test_split(samples, test_size=0.2)
     model = define_model()
     history = fit(model, train_samples, validation_samples)
-    
