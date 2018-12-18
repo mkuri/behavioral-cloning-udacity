@@ -87,9 +87,12 @@ def define_model():
     model.add(Conv2D(64, (3, 3), activation='relu'))
     model.add(Conv2D(64, (3, 3), activation='relu'))
     model.add(Flatten())
+    model.add(Dense(1000, activation='relu'))
+    model.add(Dropout(0.5))
     model.add(Dense(100, activation='relu'))
     model.add(Dropout(0.5))
     model.add(Dense(50, activation='relu'))
+    model.add(Dropout(0.5))
     model.add(Dense(10, activation='relu'))
     model.add(Dense(1))
     return model
@@ -98,7 +101,7 @@ def define_model():
 def fit(model, train_samples, validation_samples, batch_size=32):
     train_generator = generator(train_samples, batch_size=batch_size, is_train=True)
     validation_generator = generator(validation_samples, batch_size=batch_size, is_train=False)
-    model.compile(loss='mean_squared_error', optimizer=Adam(lr=1e-4))
+    model.compile(loss='mean_squared_error', optimizer=Adam())
     checkpoint = ModelCheckpoint('model-{epoch:03d}.h5',
                                  monitor='val_loss',
                                  verbose=0,
